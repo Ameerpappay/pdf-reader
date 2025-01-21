@@ -25,10 +25,11 @@ const processPage = (page) => {
   return poppler.convert(pdfPath, options)
     .then(() => {
       console.log(`Page ${page} converted to image`);
-      const imagePath = path.join(outputDir, `output_page-${page}.jpg`);
+      const formattedPage = String(page).padStart(2, '0');
+      const imagePath = path.join(outputDir, `output_page-${formattedPage}.jpg`);
       return Tesseract.recognize(
         imagePath,
-        'mal',
+        'mal+eng',
         {
           logger: (m) => console.log(m),
         }
