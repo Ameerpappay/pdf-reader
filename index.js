@@ -7,7 +7,7 @@ const { PDFDocument } = require('pdf-lib');
 const pdfPath = 'file/test-file.pdf';
 const outputDir = path.join(__dirname, 'output_images');
 const outputTextFile = path.join(__dirname, 'extracted_text.txt');
-const questionsOutputFile = path.join(__dirname, 'questions_and_options.txt');
+const questionsOutputFile = path.join(__dirname, 'questions_and_options.sql');
 
 // Ensure the output directory exists
 if (!fs.existsSync(outputDir)) {
@@ -52,10 +52,10 @@ const processPage = (page) => {
 
 // Function to process all pages
 const processAllPages = async (numPages) => {
-    // for (let page = 3; page <= numPages; page++) {
-    //     await processPage(page);
-    // }
-    // console.log('All pages processed');
+    for (let page = 3; page <= numPages; page++) {
+        await processPage(page);
+    }
+    console.log('All pages processed');
 
     extractQuestionsAndOptions();
 };
@@ -81,54 +81,59 @@ getNumberOfPages(pdfPath)
 const extractQuestionsAndOptions = () => {
     const text = fs.readFileSync(outputTextFile, 'utf-8');
     const lines = text.split('\n');
-    const questionsAndOptions = [];
-    let currentQuestion = null;
-    let collectingOptions = false;
+    const sqlStatements = [];
+
+    let question = "";
+    let isCollectingQuestion = false;
+    let options = { A: null, B: null, C: null, D: null };
 
     lines.forEach(line => {
         const questionMatch = line.match(/^\d+\.\s+(.+)/);
-        const optionMatch = line.match(/^[A-D]\)\s+(.+)/);
-        const romanMatch = line.match(/^(i{1,3}|iv|v)\.\s+(.+)/i);
-        const arabicLikeMatch = line.match(/^(\d+)\)\s+(.+)/);
+        let optionMatches = line.match(/([A-D©8])\)\s+([^A-D©8]+)/g);
 
-        if (questionMatch) {
-            if (currentQuestion) {
-                questionsAndOptions.push('---');
+        if (optionMatches) {
+            optionMatches = optionMatches.map(option => {
+                if (option.startsWith('©)')) {
+                    return option.replace('©)', 'C)');
+                } else if (option.startsWith('8)')) {
+                    return option.replace('8)', 'B)');
+                }
+                return option;
+            });
+        }
+
+        if (optionMatches == null && (questionMatch || isCollectingQuestion)) {
+            isCollectingQuestion = true;
+            if (questionMatch) {
+                question += questionMatch[1].replace(/^\d+\)\s*/, '');
+            } else {
+                question += line;
             }
-            currentQuestion = `Question: ${questionMatch[1].trim()}`;
-            questionsAndOptions.push(currentQuestion);
-            collectingOptions = false;
-        } else if (romanMatch && currentQuestion && !collectingOptions) {
-            const romanPoint = `${romanMatch[1].trim()}. ${romanMatch[2].trim()}`;
-            questionsAndOptions.push(romanPoint);
-        } else if (arabicLikeMatch && currentQuestion && !collectingOptions) {
-            // Treat patterns like 1), 2) as Roman numerals
-            const romanNumeral = convertToRoman(arabicLikeMatch[1]);
-            const romanPoint = `${romanNumeral}. ${arabicLikeMatch[2].trim()}`;
-            questionsAndOptions.push(romanPoint);
-        } else if (optionMatch && currentQuestion) {
-            const option = `Option ${optionMatch[0].trim()}`;
-            questionsAndOptions.push(option);
-            collectingOptions = true;
-        } else if (currentQuestion && !collectingOptions) {
-            // Append additional lines to the current question
-            questionsAndOptions[questionsAndOptions.length - 1] += ` ${line.trim()}`;
-        } else if (questionMatch && currentQuestion) {
-            // Treat the second question as part of the first question
-            questionsAndOptions[questionsAndOptions.length - 1] += ` ${line.trim()}`;
+        }
+
+        if (optionMatches) {
+            isCollectingQuestion = false;
+            optionMatches.forEach(option => {
+                const optionMatch = option.match(/^([A-D])\)\s+(.+)/);
+                if (optionMatch) {
+                    options[optionMatch[1]] = optionMatch[2].trim().replace(/go/g, 'ഉം');
+                }
+            });
+        }
+
+        if (options.D) {
+            sqlStatements.push(generateInsertStatement(question, options));
+            question = "";
+            options = { A: null, B: null, C: null, D: null };
         }
     });
 
-    if (currentQuestion) {
-        questionsAndOptions.push('---');
-    }
-
-    fs.writeFileSync(questionsOutputFile, questionsAndOptions.join('\n'), 'utf-8');
-    console.log(`Questions and options written to ${questionsOutputFile}`);
+    const sqlScript = sqlStatements.join('\n');
+    fs.writeFileSync(questionsOutputFile, sqlScript, 'utf-8');
+    console.log(`SQL script written to ${questionsOutputFile}`);
 };
 
-// Helper function to convert Arabic numerals to Roman numerals
-const convertToRoman = (num) => {
-    const romanNumerals = ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x'];
-    return romanNumerals[num - 1] || num;
+const generateInsertStatement = (question, options) => {
+    return `INSERT INTO Question (QuestionText, OptionA, OptionB, OptionC, OptionD) VALUES ('${question.replace(/'/g, "''")}', '${(options.A || '').replace(/'/g, "''")}', '${(options.B || '').replace(/'/g, "''")}', '${(options.C || '').replace(/'/g, "''")}', '${(options.D || '').replace(/'/g, "''")}');`;
 };
+
